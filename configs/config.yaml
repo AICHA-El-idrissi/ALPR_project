@@ -1,0 +1,222 @@
+# Configuration commune aux deux cibles.
+#
+# CHOISIR CE QU'ON TESTE
+# ======================
+#   --edge_type   la CIBLE                    (rpi | jetson)
+#   --detector    la section de models: à monter en détection
+#   --ocr         la section de models: à monter en OCR
+#   --precision   fp32 | fp16 | int8
+#   --backend     force le moteur ; sinon déduit de la cible, et si le modèle
+#                 n'a qu'un seul export, ce sera celui-là
+#
+# Quatre modèles, quatre sections :
+#
+#   detector        YOLOv8n        véhicules + plaque    ncnn, onnx, tensorrt
+#   detector_dfine  D-FINE-N       véhicules + plaque    onnx
+#   ocr             YOLO11n-OCR    caractères            ncnn, onnx, tensorrt
+#   ocr_paddle      PaddleOCR rec  séquence CTC          ncnn, onnx
+#
+# Exemples :
+#   python3 main.py --edge_type rpi --source video --input clip.mp4
+#   python3 main.py --edge_type rpi --source video --input clip.mp4 --backend onnx
+#   python3 main.py --edge_type rpi --source video --input clip.mp4 --ocr ocr_paddle
+#   python3 main.py --edge_type rpi --source image --input p.jpg \
+#       --detector detector_dfine --ocr ocr_paddle
+#   python3 main.py --list-backends
+#
+# LA FAMILLE FIXE LE PRÉTRAITEMENT, et les quatre sont incompatibles entre
+# elles. Se tromper ne lève aucune erreur : ça fait lire faux. Détail dans
+# src/common/preprocess.py.
+#
+#   yolo         letterbox (ratio + gris centré)    RGB   [0, 1]
+#   yolo_chars   ÉTIREMENT carré, sans remplissage  RGB   [0, 1]
+#   dfine        resize DIRECT + orig_target_sizes  RGB   [0, 1]
+#   paddle_rec   hauteur fixe, remplissage à droite BGR   [-1, 1]
+
+project:
+  name: alpr-edge
+  version: 1.2.0
+
+models:
+
+  # ======================================================== DÉTECTION : YOLO
+  detector:
+    family: yolo
+
+    paths:
+      ncnn:     "models/exported/ncnn/yolo/{precision}/detector"
+      onnx:     "models/exported/onnx/yolo/{precision}/detector"
+      tensorrt: "models/exported/tensorrt/yolo/{precision}/detector"
+
+    num_classes: 5
+    plate_cls_id: 2
+
+    imgsz: 640
+    conf_thres: 0.35
+    iou_thres: 0.45
+    classes: [0, 1, 2, 3, 4]
+    class_names: {0: bus, 1: voiture, 2: plaque, 3: moto, 4: camion}
+    calib_dir: data_calibration/detector
+
+  # ====================================================== DÉTECTION : D-FINE
+  detector_dfine:
+    family: dfine
+
+    paths:
+      onnx:     models/dfine_n/best_stg2_single.onnx
+      tensorrt: null            # engine à construire sur le Jetson
+      ncnn:     null            # portage non validé (GridSample, TopK dyn.)
+    num_classes: 5
+    plate_cls_id: 2
+    imgsz: 640
+    conf_thres: 0.35
+    iou_thres: 0.45
+    class_names: {0: bus, 1: voiture, 2: plaque, 3: moto, 4: camion}
+
+  # ============================================================= OCR : YOLO
+  ocr:
+    family: yolo_chars
+    # ÉTIREMENT carré, pas de letterbox : une vignette de plaque 135x28
+    # letterboxée vers 608² n'occupe que 20,7 % du canvas. Scores mesurés
+    # 0,011-0,015 en letterbox contre 0,27-0,29 en étirement.
+    paths:
+      ncnn:     "models/exported/ncnn/yolo/{precision}/ocr"
+      onnx:     "models/exported/onnx/yolo/{precision}/ocr"
+      tensorrt: "models/exported/tensorrt/yolo/{precision}/ocr"
+   
+    imgsz: 608
+    conf_thres: 0.30
+    iou_thres: 0.45
+    calib_dir: data_calibration/ocr
+    # 19 classes de détection, SANS blanc : l'indice de classe est
+    # directement l'indice dans cette liste. Ordre issu de dataset_ocr.yaml.
+
+    charset: ['0','1','2','3','4','5','6','7','8','9','a','b','d','gr','h','t','w','waw','y']
+    charset_dict:
+      "0": "0"
+      "1": "1"
+      "2": "2"
+      "3": "3"
+      "4": "4"
+      "5": "5"
+      "6": "6"
+      "7": "7"
+      "8": "8"
+      "9": "9"
+      "a": "أ"
+      "b": "ب"
+      "d": "د"
+      "gr": "g"
+      "h": "ه"
+      "t": "ط"
+      "w": "ww"
+      "waw": "و"
+      "y": "ي"
+
+  # ======================================================== OCR : PaddleOCR
+  ocr_paddle:
+    family: paddle_rec
+    # Le v1 : confiance
+    # 0,224 et 1,9 % de blanc CTC, contre 0,955 et 68,8 % ici. Portage ncnn
+    # validé : écart relatif 3,9e-04 contre ONNX, lectures 0,94-0,997 sur
+    # 11 imagettes réelles.
+    #
+    # Pas de niveau de précision : un seul export par moteur.
+    paths:
+      ncnn:     models/exported/ncnn/paddle_rec/model.ncnn.param
+      onnx:     models/paddleocr/paddleocr_rec_fixed.onnx
+      tensorrt: null            # engine à construire sur le Jetson
+    imgsz: 320                  # ignoré : height/width priment pour paddle_rec
+    height: 48                  # imposée par l'architecture du modèle
+    width: 320
+    conf_thres: 0.30            # seuil de rejet sur la confiance CTC
+    # Prétraitement mesuré comme optimal sur 48 combinaisons : ratio conservé
+    # + remplissage à droite (0,955) bat l'étirement (0,871), et BGR bat RGB
+    # (0,955 contre 0,946). C'est le resize_norm_img officiel de PaddleOCR.
+    #
+    # SOURCE DE VÉRITÉ UNIQUE pour le charset : le dictionnaire
+    # d'entraînement. 19 lignes -> 19 + 1 blanc CTC = 20 classes. La PREMIÈRE
+    # ligne est vide et c'est une classe : la filtrer décalerait tous les
+    # caractères et produirait un texte plausible et faux.
+    # Ne PAS dupliquer la liste ici, les deux divergeraient.
+    charset_file: models/paddleocr/dict.txt
+
+pipeline:
+  frame_skip: 3               # inférence détecteur toutes les N frames (video/csi)
+  vehicle_track_buffer: 30    # frames de tolérance avant de perdre une piste véhicule
+  plate_track_buffer: 10
+  min_votes_before_lock: 5    # lectures OCR concordantes avant de figer le résultat
+  min_plate_width: 24         # px : en dessous, l'OCR est inutile -> on ne le lance pas
+  min_sharpness: 0.0          # variance du Laplacien minimale (0 = filtre désactivé)
+  num_threads: 4
+
+tracking:
+  tracker: byte
+  track_buffer: 30
+
+voting:
+  enabled: true
+  window: 15                  # taille de l'historique de vote par véhicule
+
+export:
+  format: [ncnn, onnx, engine]
+  int8: true
+  dynamic: false
+  simplify: true
+  out_dir: models/exported
+
+quantization:
+  n: 300
+  method: kl                  # kl ou aciq
+  # PaddleOCR : mean/norm imposés par son prétraitement (x/255-0,5)/0,5,
+  # soit (x-127,5)/127,5. Une table calibrée avec d'autres valeurs produit
+  # un modèle qui lit faux sans rien signaler.
+  paddle_rec:
+    mean: [127.5, 127.5, 127.5]
+    norm: [0.00784314, 0.00784314, 0.00784314]
+    shape: [320, 48, 3]
+    pixel: BGR
+
+video:
+  capture:
+    width: 1280
+    height: 720
+    framerate: 30
+    # drop_late: true         # forcer l'abandon des frames en retard (auto par défaut)
+
+runtime:
+  stats_hz: 1.0               # fréquence de publication des métriques (FPS, latences)
+  preview_hz: 2.0             # fréquence de l'aperçu vidéo envoyé au dashboard
+
+  logging:
+    console: true
+    file: logs/alpr.log
+    level: INFO
+    file_level: WARNING
+
+  storage:
+    # Contrainte du projet : rien n'est écrit sur la carte SD. Les événements
+    # partent en MQTT puis sont oubliés. --store_frame / --store_crop forcent
+    # l'écriture ponctuellement, pour du débogage.
+    save: false
+    output_root: outputs/
+    save_full_frames: false
+    frame_save_every_n: 30
+    retention_days: 3
+
+  mqtt:
+    enabled: true
+    host: "192.168.10.1"      # IP de la machine qui héberge Mosquitto
+    port: 1883
+    keepalive: 60
+    qos: 1
+    topic: "alpr-edge"        # doit valoir BASE_TOPIC du dashboard
+    client_id: "raspi01"
+    use_tls: false
+    username: null
+    password: null
+    image_max_side: 240       # px, crop de plaque envoyé dans l'événement
+    image_jpeg_quality: 60
+    preview_max_side: 640     # px, aperçu vidéo annoté
+    preview_jpeg_quality: 55
+    max_pending_messages: 500

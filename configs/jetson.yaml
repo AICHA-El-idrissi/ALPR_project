@@ -1,0 +1,16 @@
+# Surcharges propres au Jetson.
+#
+# Les chemins de modèles sont dans configs/config.yaml, section par section
+# (clé `paths:`). Ce fichier ne porte plus que ce qui dépend de la CARTE.
+#
+# RAPPEL : un engine TensorRT doit être construit SUR la carte cible — il
+# dépend de l'architecture GPU et des versions TensorRT/CUDA. Voir
+# scripts/export_jetson.py.
+#
+# La Jetson Nano d'ORIGINE plafonne à JetPack 4.6.1 -> TensorRT 8.2.1, qui
+# ne connaît pas GridSample : D-FINE n'y est pas convertible. Sur Orin Nano
+# (JetPack 5.1+, TensorRT 8.5+), il passe.
+
+pipeline:
+  num_threads: 6
+  frame_skip: 2

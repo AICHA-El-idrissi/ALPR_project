@@ -1,0 +1,17 @@
+exported_models:
+  ncnn:
+    fp32:
+      detector: models/exported/ncnn/fp32/detector
+      ocr: models/exported/ncnn/fp32/ocr
+
+    int8:
+      detector: models/exported/ncnn/int8/detector
+      ocr: models/exported/ncnn/int8/ocr
+
+
+
+pipeline:
+  frame_skip: 4          # le Pi 4 ne tiendra pas 30 FPS : on detecte 1 frame sur 4
+  num_threads: 4         # 4 coeurs Cortex-A72
+  min_plate_width: 28
+  min_sharpness: 40.0    # rejette les crops flous avant l'OCR (gros gain CPU)

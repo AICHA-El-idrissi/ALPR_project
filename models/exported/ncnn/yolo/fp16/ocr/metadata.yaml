@@ -1,0 +1,38 @@
+description: Ultralytics YOLO11n model trained on c:\Users\DELL\Desktop\LP_OCR\YOLO_11_OCR\data\data.yaml
+author: Ultralytics
+date: '2026-08-30T21:14:46.054966+01:00'
+version: 8.4.115
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 608
+- 608
+names:
+  0: '0'
+  1: '1'
+  2: '2'
+  3: '3'
+  4: '4'
+  5: '5'
+  6: '6'
+  7: '7'
+  8: '8'
+  9: '9'
+  10: a
+  11: b
+  12: d
+  13: gr
+  14: h
+  15: t
+  16: w
+  17: waw
+  18: y
+args:
+  batch: 1
+  quantize: 16
+channels: 3
+end2end: false
